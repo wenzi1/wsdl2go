@@ -103,7 +103,7 @@ func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) err
 		URNAttr:      c.URNamespace,
 		NSAttr:       c.Namespace,
 		TNSAttr:      c.ThisNamespace,
-		XSIAttr:      XSINamespace,
+		//XSIAttr:      XSINamespace,
 		Header:       c.Header,
 		Body:         in,
 	}
@@ -114,9 +114,9 @@ func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) err
 	if req.NSAttr == "" {
 		req.NSAttr = c.URL
 	}
-	if req.TNSAttr == "" {
+	/*if req.TNSAttr == "" {
 		req.TNSAttr = req.NSAttr
-	}
+	}*/
 	var b bytes.Buffer
 	err := xml.NewEncoder(&b).Encode(req)
 	if err != nil {
