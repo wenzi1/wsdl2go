@@ -10,8 +10,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"reflect"
-
-	"golang.org/x/net/html/charset"
+	//"golang.org/x/net/html/charset"
 )
 
 // XSINamespace is a link to the XML Schema instance namespace.
@@ -24,8 +23,8 @@ var xmlTyperType reflect.Type = reflect.TypeOf((*XMLTyper)(nil)).Elem()
 // object. Returns error in case an error occurs serializing req, making
 // the HTTP request, or de-serializing the response.
 type RoundTripper interface {
-	RoundTrip(req, resp Message) error
-	RoundTripSoap12(action string, req, resp Message) error
+	RoundTrip(req Message) (Message, error)
+	//RoundTripSoap12(action string, req, resp Message) error
 }
 
 // Message is an opaque type used by the RoundTripper to carry XML
@@ -96,7 +95,7 @@ func setXMLType(v reflect.Value) {
 	}
 }
 
-func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) error {
+func doRoundTrip(c *Client, setHeaders func(*http.Request), in Message) (out Message, err error) {
 	setXMLType(reflect.ValueOf(in))
 	req := &Envelope{
 		EnvelopeAttr: c.Envelope,
@@ -114,21 +113,23 @@ func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) err
 	if req.NSAttr == "" {
 		req.NSAttr = c.URL
 	}
-	/*if req.TNSAttr == "" {
-		req.TNSAttr = req.NSAttr
-	}*/
+	if req.TNSAttr == "" {
+		//req.TNSAttr = req.NSAttr
+	}
 	var b bytes.Buffer
-	err := xml.NewEncoder(&b).Encode(req)
+	err = xml.NewEncoder(&b).Encode(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cli := c.Config
 	if cli == nil {
 		cli = http.DefaultClient
 	}
+	fmt.Println("soap message: ",b.String())
+
 	r, err := http.NewRequest("POST", c.URL, &b)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	setHeaders(r)
 	if c.Pre != nil {
@@ -141,7 +142,7 @@ func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) err
 
 	resp, err := cli.Do(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if c.Post != nil {
@@ -151,25 +152,34 @@ func doRoundTrip(c *Client, setHeaders func(*http.Request), in, out Message) err
 		// read only the first MiB of the body in error case
 		limReader := io.LimitReader(resp.Body, 1024*1024)
 		body, _ := ioutil.ReadAll(limReader)
-		return &HTTPError{
+		return nil, &HTTPError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
 			Msg:        string(body),
 		}
 	}
 
-	marshalStructure := struct {
+	res, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("ReadAll error.    ", err)
+		return nil, err
+	}
+	out = string(res)
+	fmt.Println("recv message: ", res)
+	return out, nil
+
+	/*marshalStructure := struct {
 		XMLName xml.Name `xml:"Envelope"`
 		Body    Message
 	}{Body: out}
 
 	decoder := xml.NewDecoder(resp.Body)
 	decoder.CharsetReader = charset.NewReaderLabel
-	return decoder.Decode(&marshalStructure)
+	return decoder.Decode(&marshalStructure)*/
 }
 
 // RoundTrip implements the RoundTripper interface.
-func (c *Client) RoundTrip(in, out Message) error {
+/*func (c *Client) RoundTrip(in, out Message) error {
 	headerFunc := func(r *http.Request) {
 		if c.UserAgent != "" {
 			r.Header.Add("User-Agent", c.UserAgent)
@@ -193,11 +203,11 @@ func (c *Client) RoundTrip(in, out Message) error {
 		}
 	}
 	return doRoundTrip(c, headerFunc, in, out)
-}
+}*/
 
 // RoundTripWithAction implements the RoundTripper interface for SOAP clients
 // that need to set the SOAPAction header.
-func (c *Client) RoundTripWithAction(soapAction string, in, out Message) error {
+func (c *Client) RoundTripWithAction(soapAction string, in Message) (out Message, err error) {
 	headerFunc := func(r *http.Request) {
 		if c.UserAgent != "" {
 			r.Header.Add("User-Agent", c.UserAgent)
@@ -210,23 +220,23 @@ func (c *Client) RoundTripWithAction(soapAction string, in, out Message) error {
 		r.Header.Set("Content-Type", ct)
 		if in != nil {
 			if c.ExcludeActionNamespace {
-				actionName = soapAction
+				//actionName = soapAction
 			} else {
 				actionName = fmt.Sprintf("%s/%s", c.Namespace, soapAction)
 			}
 			r.Header.Add("SOAPAction", actionName)
 		}
 	}
-	return doRoundTrip(c, headerFunc, in, out)
+	return doRoundTrip(c, headerFunc, in)
 }
 
 // RoundTripSoap12 implements the RoundTripper interface for SOAP 1.2.
-func (c *Client) RoundTripSoap12(action string, in, out Message) error {
+/*func (c *Client) RoundTripSoap12(action string, in, out Message) error {
 	headerFunc := func(r *http.Request) {
 		r.Header.Add("Content-Type", fmt.Sprintf("application/soap+xml; charset=utf-8; action=\"%s\"", action))
 	}
 	return doRoundTrip(c, headerFunc, in, out)
-}
+}*/
 
 // HTTPError is detailed soap http error
 type HTTPError struct {
@@ -241,12 +251,12 @@ func (e *HTTPError) Error() string {
 
 // Envelope is a SOAP envelope.
 type Envelope struct {
-	XMLName      xml.Name `xml:"SOAP-ENV:Envelope"`
-	EnvelopeAttr string   `xml:"xmlns:SOAP-ENV,attr"`
-	NSAttr       string   `xml:"xmlns:ns,attr"`
+	XMLName      xml.Name `xml:"soapenv:Envelope"`
+	EnvelopeAttr string   `xml:"xmlns:soapenv,attr"`
+	NSAttr       string   `xml:"xmlns:ser,attr"`
 	TNSAttr      string   `xml:"xmlns:tns,attr,omitempty"`
 	URNAttr      string   `xml:"xmlns:urn,attr,omitempty"`
 	XSIAttr      string   `xml:"xmlns:xsi,attr,omitempty"`
-	Header       Message  `xml:"SOAP-ENV:Header"`
-	Body         Message  `xml:"SOAP-ENV:Body"`
+	Header       Message  `xml:"soapenv:Header"`
+	Body         Message  `xml:"soapenv:Body"`
 }
